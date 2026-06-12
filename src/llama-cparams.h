@@ -33,6 +33,7 @@ struct llama_cparams {
     bool embeddings_nextn;        // also extract the hidden state before the final output norm
     bool embeddings_nextn_masked; // extract for only rows where batch.logits != 0
     bool causal_attn;
+    bool orthrus_diffusion;       // run Orthrus diffusion attention projections for the next decode
     bool offload_kqv;
     bool flash_attn;
     bool auto_fa;

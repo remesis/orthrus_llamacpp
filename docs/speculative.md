@@ -13,6 +13,12 @@ The `llama-server` application supports several implementations of speculative d
 A much smaller model (called the _draft model_) generates drafts.
 A draft model is the most used approach in speculative decoding.
 
+### Orthrus (`draft-orthrus`)
+
+Orthrus models can generate drafts with the target model itself. This mode runs a diffusion draft pass over `[last token, mask tokens...]` on the target context, selects non-causal attention for that pass, and then removes the temporary KV cells before the normal target verification pass writes the accepted path.
+
+`draft-orthrus` is currently wired for `llama-server`. At `--temp 0`, verification is lossless greedy token matching. For `--temp > 0`, it follows the existing llama.cpp speculative token-match verification semantics rather than Orthrus's residual rejection-sampling variant.
+
 ### n-gram Cache (`ngram-cache`)
 
 An n-gram is a sequence of n tokens. The n-gram cache implementation maintains statistics about short n-gram sequences.
@@ -108,7 +114,7 @@ If a draft model is combined with a draftless decoding the draftless decoding ha
 ### General Speculative Parameters
 
 ```
---spec-type [none|draft-simple|draft-mtp|ngram-cache|ngram-simple|ngram-map-k|ngram-map-k4v|ngram-mod]
+--spec-type [none|draft-simple|draft-mtp|draft-orthrus|ngram-cache|ngram-simple|ngram-map-k|ngram-map-k4v|ngram-mod]
                                         comma-separated list of types of speculative decoding to use
                                         (default: none)
                                         (env: LLAMA_ARG_SPEC_TYPE)
@@ -248,6 +254,7 @@ Specifies a comma-separated list of speculative decoding types to use.
 | `none` | No speculative decoding (default) |
 | `draft-simple` | Use a simple draft model for speculation |
 | `draft-mtp` | Use Multi Token Prediction (MTP) heads from the main model |
+| `draft-orthrus` | Use Orthrus shared-KV diffusion drafting from the target model |
 | `ngram-cache` | Use n-gram cache lookup |
 | `ngram-simple` | Use simple n-gram pattern matching |
 | `ngram-map-k` | Use n-gram pattern matching with n-gram-keys |

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <map>
@@ -21,11 +22,19 @@
 #define SPEC_VOCAB_MAX_SIZE_DIFFERENCE  128
 #define SPEC_VOCAB_CHECK_START_TOKEN_ID 5
 
+static constexpr int32_t SPEC_DRAFT_N_MAX_DEFAULT = 3;
+static constexpr int32_t SPEC_ORTHRUS_N_MAX_AUTO_BOUND = 31;
+
+static int32_t common_speculative_draft_n_max_eff(int32_t n_max) {
+    return n_max > 0 ? n_max : SPEC_DRAFT_N_MAX_DEFAULT;
+}
+
 const std::map<std::string, common_speculative_type> common_speculative_type_from_name_map = {
     {"none",          COMMON_SPECULATIVE_TYPE_NONE},
     {"draft-simple",  COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE},
     {"draft-eagle3",  COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3},
     {"draft-mtp",     COMMON_SPECULATIVE_TYPE_DRAFT_MTP},
+    {"draft-orthrus", COMMON_SPECULATIVE_TYPE_DRAFT_ORTHRUS},
     {"ngram-simple",  COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE},
     {"ngram-map-k",   COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K},
     {"ngram-map-k4v", COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V},
@@ -43,6 +52,41 @@ static std::string common_speculative_get_devices_str(const std::vector<ggml_bac
         result += ggml_backend_dev_name(devices[i]);
     }
     return result.empty() ? "default" : result;
+}
+
+static bool common_speculative_model_meta_str(const llama_model * model, const char * key, std::string & value) {
+    char buf[256];
+    const int32_t n = llama_model_meta_val_str(model, key, buf, sizeof(buf));
+    if (n < 0) {
+        value.clear();
+        return false;
+    }
+
+    if (n >= (int32_t) sizeof(buf)) {
+        std::vector<char> tmp(n + 1);
+        llama_model_meta_val_str(model, key, tmp.data(), tmp.size());
+        value.assign(tmp.data());
+    } else {
+        value.assign(buf);
+    }
+
+    return true;
+}
+
+static bool common_speculative_model_meta_i32(const llama_model * model, const char * key, int32_t & value) {
+    std::string str;
+    if (!common_speculative_model_meta_str(model, key, str)) {
+        return false;
+    }
+
+    char * end = nullptr;
+    const long parsed = std::strtol(str.c_str(), &end, 10);
+    if (end == str.c_str() || *end != '\0') {
+        return false;
+    }
+
+    value = (int32_t) parsed;
+    return true;
 }
 
 struct common_speculative_config {
@@ -173,15 +217,18 @@ struct common_speculative_impl_draft_simple : public common_speculative_impl {
 
     std::vector<common_sampler_ptr> smpls;
 
+    int32_t n_max_eff = SPEC_DRAFT_N_MAX_DEFAULT;
+
     common_speculative_impl_draft_simple(const common_params_speculative & params, uint32_t n_seq)
         : common_speculative_impl(COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE, n_seq)
         , params(params.draft)
     {
         auto * ctx_dft = this->params.ctx_dft;
         auto * ctx_tgt = this->params.ctx_tgt;
+        n_max_eff = common_speculative_draft_n_max_eff(this->params.n_max);
 
         LOG_INF("%s: adding speculative implementation 'draft-simple'\n", __func__);
-        LOG_INF("%s: - n_max=%d, n_min=%d, p_min=%f\n", __func__, this->params.n_max, this->params.n_min, this->params.p_min);
+        LOG_INF("%s: - n_max=%d, n_min=%d, p_min=%f\n", __func__, n_max_eff, this->params.n_min, this->params.p_min);
         LOG_INF("%s: - gpu_layers=%d, cache_k=%s, cache_v=%s, ctx_tgt=%s, ctx_dft=%s, devices=[%s]\n", __func__,
                 this->params.n_gpu_layers,
                 ggml_type_name(this->params.cache_type_k),
@@ -331,7 +378,7 @@ struct common_speculative_impl_draft_simple : public common_speculative_impl {
 
                 result.push_back(id);
 
-                if ((params.n_max <= (int) result.size()) ||
+                if ((n_max_eff <= (int) result.size()) ||
                     (dp.n_max > 0 && dp.n_max <= (int) result.size())) {
                     drafting[seq_id] = false;
                     n_drafting--;
@@ -419,6 +466,7 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
     int32_t n_embd_dec = 0;       // draft hidden size
     int32_t n_embd_enc = 0;       // target_layer_ids_n * target_hidden_size
     int32_t n_embd_tgt = 0;       // target model hidden size
+    int32_t n_max_eff  = SPEC_DRAFT_N_MAX_DEFAULT;
 
     const int32_t * target_layer_ids   = nullptr; // model_dft's extract layer indices
     uint32_t        target_layer_ids_n = 0;
@@ -440,8 +488,10 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
         : common_speculative_impl(COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3, n_seq)
         , params(params.draft)
     {
+        n_max_eff = common_speculative_draft_n_max_eff(this->params.n_max);
+
         LOG_INF("%s: adding speculative implementation 'draft-eagle3'\n", __func__);
-        LOG_INF("%s: - n_max=%d, n_min=%d, p_min=%f\n", __func__, params.draft.n_max, params.draft.n_min, params.draft.p_min);
+        LOG_INF("%s: - n_max=%d, n_min=%d, p_min=%f\n", __func__, n_max_eff, params.draft.n_min, params.draft.p_min);
 
         auto * ctx_tgt = this->params.ctx_tgt;
         auto * ctx_dft = this->params.ctx_dft;
@@ -756,7 +806,7 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
 
                 result.push_back(id);
 
-                if (params.n_max <= (int) result.size()) {
+                if (n_max_eff <= (int) result.size()) {
                     drafting[seq_id] = false;
                     n_drafting--;
                     continue;
@@ -824,6 +874,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     std::vector<llama_sampler *> backend_chains;
 
     int32_t n_embd = 0;
+    int32_t n_max_eff = SPEC_DRAFT_N_MAX_DEFAULT;
 
     bool is_mem_shared = false;
 
@@ -853,12 +904,14 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         auto * ctx_dft = this->params.ctx_dft;
         GGML_ASSERT(ctx_tgt && ctx_dft && "MTP requires ctx_tgt and ctx_dft to be set");
 
+        n_max_eff = common_speculative_draft_n_max_eff(this->params.n_max);
+
         n_embd = llama_model_n_embd_out(llama_get_model(ctx_dft));
         GGML_ASSERT(n_embd == llama_model_n_embd(llama_get_model(ctx_tgt)) &&
                 "MTP input row width must match the target h_nextn width");
 
         LOG_INF("%s: adding speculative implementation 'draft-mtp'\n", __func__);
-        LOG_INF("%s: - n_max=%d, n_min=%d, p_min=%.2f, n_embd=%d, backend_sampling=%d\n", __func__, this->params.n_max, this->params.n_min, this->params.p_min, n_embd, (int) this->params.backend_sampling);
+        LOG_INF("%s: - n_max=%d, n_min=%d, p_min=%.2f, n_embd=%d, backend_sampling=%d\n", __func__, n_max_eff, this->params.n_min, this->params.p_min, n_embd, (int) this->params.backend_sampling);
         LOG_INF("%s: - gpu_layers=%d, cache_k=%s, cache_v=%s, ctx_tgt=%s, ctx_dft=%s, devices=[%s]\n", __func__,
                 this->params.n_gpu_layers,
                 ggml_type_name(this->params.cache_type_k),
@@ -1124,7 +1177,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
                 result.push_back(id);
 
-                if (params.n_max <= (int) result.size()) {
+                if (n_max_eff <= (int) result.size()) {
                     drafting[seq_id] = false;
                     n_drafting--;
                     continue;
@@ -1189,6 +1242,189 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
     bool need_embd_nextn() const override {
         return true;
+    }
+};
+
+struct common_speculative_impl_draft_orthrus : public common_speculative_impl {
+    common_params_speculative_draft params;
+
+    llama_batch batch;
+
+    std::vector<common_sampler_ptr> smpls;
+
+    const llama_vocab * vocab = nullptr;
+
+    llama_token mask_id = LLAMA_TOKEN_NULL;
+
+    int32_t block_size = 0;
+    int32_t n_batch    = 0;
+    int32_t n_max_eff  = 0;
+
+    common_speculative_impl_draft_orthrus(const common_params_speculative & params, uint32_t n_seq)
+        : common_speculative_impl(COMMON_SPECULATIVE_TYPE_DRAFT_ORTHRUS, n_seq)
+        , params(params.draft)
+    {
+        auto * ctx_tgt = this->params.ctx_tgt;
+        GGML_ASSERT(ctx_tgt && "Orthrus requires ctx_tgt to be set");
+
+        const llama_model * model = llama_get_model(ctx_tgt);
+        vocab = llama_model_get_vocab(model);
+
+        std::string arch;
+        if (!common_speculative_model_meta_str(model, "general.architecture", arch) || arch != "orthrus") {
+            throw std::runtime_error("draft-orthrus requires an Orthrus GGUF target model");
+        }
+
+        // Keep this string in sync with LLM_KV_DIFFUSION_BLOCK_SIZE in src/llama-arch.cpp.
+        if (!common_speculative_model_meta_i32(model, "orthrus.diffusion.block_size", block_size) || block_size < 2) {
+            throw std::runtime_error("draft-orthrus requires orthrus.diffusion.block_size >= 2");
+        }
+        n_max_eff = this->params.n_max > 0 ? this->params.n_max : block_size - 1;
+
+        mask_id = llama_vocab_mask(vocab);
+        if (mask_id == LLAMA_TOKEN_NULL) {
+            throw std::runtime_error("draft-orthrus requires tokenizer.ggml.mask_token_id");
+        }
+
+        const int32_t n_batch_tgt  = (int32_t) llama_n_batch(ctx_tgt);
+        const int32_t n_ubatch_tgt = (int32_t) llama_n_ubatch(ctx_tgt);
+
+        n_batch = std::min<int32_t>({ block_size, n_batch_tgt, n_ubatch_tgt });
+        if (n_batch < 2) {
+            throw std::runtime_error("draft-orthrus requires llama_n_batch(ctx_tgt) and llama_n_ubatch(ctx_tgt) >= 2");
+        }
+        if (n_ubatch_tgt < block_size) {
+            LOG_WRN("%s: n_ubatch=%d is smaller than Orthrus block_size=%d; drafting is capped at %d tokens. Increase -ub to at least %d for full blocks.\n",
+                    __func__, n_ubatch_tgt, block_size, n_batch - 1, block_size);
+        }
+
+        batch = llama_batch_init(n_batch, 0, 1);
+
+        smpls.resize(n_seq);
+        for (auto & smpl : smpls) {
+            common_params_sampling sparams;
+            sparams.no_perf  = false;
+            sparams.top_k    = 10;
+            sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K };
+            smpl.reset(common_sampler_init(model, sparams));
+        }
+
+        LOG_INF("%s: adding speculative implementation 'draft-orthrus'\n", __func__);
+        LOG_INF("%s: - n_max=%d, n_min=%d, p_min=%.2f, block_size=%d, mask_id=%d, n_batch=%d\n",
+                __func__, n_max_eff, this->params.n_min, this->params.p_min,
+                block_size, mask_id, n_batch);
+        LOG_INF("%s: - shared_kv=yes\n", __func__);
+    }
+
+    ~common_speculative_impl_draft_orthrus() override {
+        llama_batch_free(batch);
+    }
+
+    void begin(llama_seq_id /*seq_id*/, const llama_tokens & /*prompt*/) override {
+        // Orthrus drafts from the target KV cache, so there is no separate draft state to seed.
+    }
+
+    bool process(const llama_batch & /*batch*/) override {
+        // Orthrus drafts directly from the target KV cache; no separate draft context needs catch-up.
+        return true;
+    }
+
+    void draft(common_speculative_draft_params_vec & dparams) override {
+        auto * ctx_tgt = params.ctx_tgt;
+
+        struct diffusion_decode_scope {
+            llama_context * ctx;
+
+            explicit diffusion_decode_scope(llama_context * ctx) : ctx(ctx) {
+                llama_set_orthrus_diffusion(ctx, true);
+            }
+
+            ~diffusion_decode_scope() {
+                llama_set_orthrus_diffusion(ctx, false);
+            }
+        };
+
+        for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+            auto & dp = dparams[seq_id];
+            if (!dp.drafting) {
+                continue;
+            }
+
+            auto & result = *dp.result;
+
+            const int32_t n_param_max = n_max_eff;
+            const int32_t n_seq_max   = dp.n_max > 0 ? dp.n_max : n_param_max;
+            const int32_t n_draft     = std::min<int32_t>({ n_param_max, n_seq_max, block_size - 1, n_batch - 1 });
+
+            if (n_draft <= 0 || dp.id_last == LLAMA_TOKEN_NULL) {
+                continue;
+            }
+
+            common_sampler_reset(smpls[seq_id].get());
+
+            common_batch_clear(batch);
+            common_batch_add(batch, dp.id_last, dp.n_past, { seq_id }, true);
+            for (int32_t i = 0; i < n_draft; ++i) {
+                const bool need_logits = i < n_draft - 1;
+                common_batch_add(batch, mask_id, dp.n_past + i + 1, { seq_id }, need_logits);
+            }
+
+            int ret = 0;
+            {
+                diffusion_decode_scope scope(ctx_tgt);
+                ret = llama_decode(ctx_tgt, batch);
+            }
+
+            if (ret != 0) {
+                LOG_WRN("%s: llama_decode(ctx_tgt) returned %d for seq_id=%d\n", __func__, ret, (int) seq_id);
+                llama_memory_seq_rm(llama_get_memory(ctx_tgt), seq_id, dp.n_past, -1);
+                continue;
+            }
+
+            auto * smpl = smpls[seq_id].get();
+            for (int32_t i = 0; i < n_draft; ++i) {
+                common_sampler_sample(smpl, ctx_tgt, i, true);
+
+                const auto * cur_p = common_sampler_get_candidates(smpl, true);
+                if (cur_p == nullptr || cur_p->size == 0) {
+                    break;
+                }
+
+                const llama_token id = cur_p->data[0].id;
+                const float p = cur_p->data[0].p;
+
+                for (int k = 0; k < std::min(3, (int) cur_p->size); ++k) {
+                    LOG_DBG(" - seq_id %d, draft candidate %3d, pos %3d: %6d (%8.3f) '%s'\n",
+                            seq_id, k, i, cur_p->data[k].id, cur_p->data[k].p,
+                            common_token_to_piece(ctx_tgt, cur_p->data[k].id).c_str());
+                }
+
+                if (id == LLAMA_TOKEN_NULL || id == mask_id || p < params.p_min) {
+                    break;
+                }
+
+                common_sampler_accept(smpl, id, true);
+                result.push_back(id);
+
+                if (llama_vocab_is_eog(vocab, id)) {
+                    break;
+                }
+            }
+
+            llama_memory_seq_rm(llama_get_memory(ctx_tgt), seq_id, dp.n_past, -1);
+
+            if (result.size() < (size_t) params.n_min) {
+                result.clear();
+            }
+        }
+    }
+
+    void accept(llama_seq_id /*seq_id*/, uint16_t /*n_accepted*/, bool /*is_other*/) override {
+        // noop
+    }
+
+    bool need_embd() const override {
+        return false;
     }
 };
 
@@ -1689,6 +1925,7 @@ std::string common_speculative_type_to_str(common_speculative_type type) {
         case COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE:  return "draft-simple";
         case COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3:  return "draft-eagle3";
         case COMMON_SPECULATIVE_TYPE_DRAFT_MTP:     return "draft-mtp";
+        case COMMON_SPECULATIVE_TYPE_DRAFT_ORTHRUS: return "draft-orthrus";
         case COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE:  return "ngram-simple";
         case COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K:   return "ngram-map-k";
         case COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V: return "ngram-map-k4v";
@@ -1741,7 +1978,13 @@ int32_t common_speculative_n_max(const common_params_speculative * spec) {
             case COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE:
             case COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3:
             case COMMON_SPECULATIVE_TYPE_DRAFT_MTP:
-                n_max = std::max(n_max, std::max(0, spec->draft.n_max));
+                n_max = std::max(n_max, spec->draft.n_max > 0 ? spec->draft.n_max : SPEC_DRAFT_N_MAX_DEFAULT);
+                break;
+            case COMMON_SPECULATIVE_TYPE_DRAFT_ORTHRUS:
+                // The exact Orthrus block size is model metadata and is resolved at runtime.
+                // Use the official checkpoints' K-1 bound here so server output buffers
+                // are large enough when --spec-draft-n-max is left on auto.
+                n_max = std::max(n_max, spec->draft.n_max > 0 ? spec->draft.n_max : SPEC_ORTHRUS_N_MAX_AUTO_BOUND);
                 break;
             case COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE:
                 n_max = std::max(n_max, (int32_t) spec->ngram_simple.size_m);
@@ -1778,6 +2021,7 @@ common_speculative * common_speculative_init(common_params_speculative & params,
         bool has_draft_simple = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE));
         bool has_draft_eagle3 = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3)) && params.draft.ctx_dft != nullptr;
         bool has_mtp = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_DRAFT_MTP)) && params.draft.ctx_dft != nullptr;
+        bool has_orthrus = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_DRAFT_ORTHRUS)) && params.draft.ctx_tgt != nullptr;
 
 
 
@@ -1788,7 +2032,7 @@ common_speculative * common_speculative_init(common_params_speculative & params,
         bool has_ngram_mod     = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_NGRAM_MOD));
 
         // when adding a new type - update here the logic above
-        static_assert(COMMON_SPECULATIVE_TYPE_COUNT == 9);
+        static_assert(COMMON_SPECULATIVE_TYPE_COUNT == 10);
 
         // this list here defines the priority of the speculators
         // the one with highest priority are listed first
@@ -1818,6 +2062,9 @@ common_speculative * common_speculative_init(common_params_speculative & params,
         if (has_mtp) {
             configs.push_back(common_speculative_config(COMMON_SPECULATIVE_TYPE_DRAFT_MTP, params));
         }
+        if (has_orthrus) {
+            configs.push_back(common_speculative_config(COMMON_SPECULATIVE_TYPE_DRAFT_ORTHRUS, params));
+        }
     }
 
     std::vector<std::unique_ptr<common_speculative_impl>> impls = {};
@@ -1836,6 +2083,10 @@ common_speculative * common_speculative_init(common_params_speculative & params,
             }
             case COMMON_SPECULATIVE_TYPE_DRAFT_MTP: {
                 impls.push_back(std::make_unique<common_speculative_impl_draft_mtp>(config.params, n_seq));
+                break;
+            }
+            case COMMON_SPECULATIVE_TYPE_DRAFT_ORTHRUS: {
+                impls.push_back(std::make_unique<common_speculative_impl_draft_orthrus>(config.params, n_seq));
                 break;
             }
             case COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE: {

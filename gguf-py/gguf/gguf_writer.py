@@ -814,6 +814,9 @@ class GGUFWriter:
     def add_logit_scale(self, value: float) -> None:
         self.add_float32(Keys.LLM.LOGIT_SCALE.format(arch=self.arch), value)
 
+    def add_diffusion_block_size(self, value: int) -> None:
+        self.add_uint32(Keys.LLM.DIFFUSION_BLOCK_SIZE.format(arch=self.arch), value)
+
     def add_attn_logit_softcapping(self, value: float) -> None:
         self.add_float32(Keys.LLM.ATTN_LOGIT_SOFTCAPPING.format(arch=self.arch), value)
 

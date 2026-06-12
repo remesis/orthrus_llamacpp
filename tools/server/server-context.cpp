@@ -906,6 +906,12 @@ private:
 
         add_bos_token = llama_vocab_get_add_bos(vocab);
 
+        if (std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
+                     COMMON_SPECULATIVE_TYPE_DRAFT_ORTHRUS) != params_base.speculative.types.end()) {
+            SRV_INF("%s", "enabling Orthrus shared-KV speculative drafting on the target context\n");
+            params_base.speculative.draft.ctx_tgt = ctx_tgt;
+        }
+
         if (params_base.speculative.has_dft()) {
             // TODO speculative: move to common/speculative.cpp?
             const auto & params_spec = params_base.speculative.draft;

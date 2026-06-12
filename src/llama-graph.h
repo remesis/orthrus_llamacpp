@@ -34,6 +34,7 @@ enum llm_graph_type {
     LLM_GRAPH_TYPE_ENCODER,
     LLM_GRAPH_TYPE_DECODER,
     LLM_GRAPH_TYPE_DECODER_MTP,
+    LLM_GRAPH_TYPE_DECODER_ORTHRUS_DIFFUSION,
 };
 
 enum llm_ffn_op_type : int {

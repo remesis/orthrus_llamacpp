@@ -127,6 +127,7 @@ class Keys:
         MOE_EVERY_N_LAYERS                = "{arch}.moe_every_n_layers"
         MOE_LATENT_SIZE                   = "{arch}.moe_latent_size"
         NEXTN_PREDICT_LAYERS              = "{arch}.nextn_predict_layers"
+        DIFFUSION_BLOCK_SIZE              = "{arch}.diffusion.block_size"
         NUM_DEEPSTACK_LAYERS              = "{arch}.n_deepstack_layers"
         DEEPSTACK_MAPPING                 = "{arch}.deepstack_mapping"
         POOLING_TYPE                      = "{arch}.pooling_type"
@@ -422,6 +423,7 @@ class MODEL_ARCH(IntEnum):
     QWEN2MOE         = auto()
     QWEN2VL          = auto()
     QWEN3            = auto()
+    ORTHRUS          = auto()
     QWEN3MOE         = auto()
     QWEN3NEXT        = auto()
     QWEN3VL          = auto()
@@ -559,6 +561,10 @@ class MODEL_TENSOR(IntEnum):
     ATTN_V               = auto()
     ATTN_QKV             = auto()
     ATTN_OUT             = auto()
+    ATTN_Q_DIFF          = auto()
+    ATTN_K_DIFF          = auto()
+    ATTN_V_DIFF          = auto()
+    ATTN_OUT_DIFF        = auto()
     ATTN_NORM            = auto()
     ATTN_NORM_2          = auto()
     ATTN_OUT_NORM        = auto()
@@ -594,6 +600,8 @@ class MODEL_TENSOR(IntEnum):
     MOE_LATENT_UP        = auto() # nemotron 3 super
     ATTN_Q_NORM          = auto()
     ATTN_K_NORM          = auto()
+    ATTN_Q_NORM_DIFF     = auto()
+    ATTN_K_NORM_DIFF     = auto()
     LAYER_OUT_NORM       = auto()
     LAYER_OUT_SCALE      = auto()
     PER_LAYER_TOKEN_EMBD = auto() # gemma3n
@@ -977,6 +985,7 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.QWEN2MOE:         "qwen2moe",
     MODEL_ARCH.QWEN2VL:          "qwen2vl",
     MODEL_ARCH.QWEN3:            "qwen3",
+    MODEL_ARCH.ORTHRUS:          "orthrus",
     MODEL_ARCH.QWEN3MOE:         "qwen3moe",
     MODEL_ARCH.QWEN3NEXT:        "qwen3next",
     MODEL_ARCH.QWEN3VL:          "qwen3vl",
@@ -1115,11 +1124,17 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.ATTN_K:                    "blk.{bid}.attn_k",
     MODEL_TENSOR.ATTN_V:                    "blk.{bid}.attn_v",
     MODEL_TENSOR.ATTN_OUT:                  "blk.{bid}.attn_output",
+    MODEL_TENSOR.ATTN_Q_DIFF:               "blk.{bid}.attn_q_diff",
+    MODEL_TENSOR.ATTN_K_DIFF:               "blk.{bid}.attn_k_diff",
+    MODEL_TENSOR.ATTN_V_DIFF:               "blk.{bid}.attn_v_diff",
+    MODEL_TENSOR.ATTN_OUT_DIFF:             "blk.{bid}.attn_output_diff",
     MODEL_TENSOR.ATTN_ROT_EMBD:             "blk.{bid}.attn_rot_embd",
     MODEL_TENSOR.ATTN_SINKS:                "blk.{bid}.attn_sinks",
     MODEL_TENSOR.ATTN_GATE:                 "blk.{bid}.attn_gate",
     MODEL_TENSOR.ATTN_Q_NORM:               "blk.{bid}.attn_q_norm",
     MODEL_TENSOR.ATTN_K_NORM:               "blk.{bid}.attn_k_norm",
+    MODEL_TENSOR.ATTN_Q_NORM_DIFF:          "blk.{bid}.attn_q_norm_diff",
+    MODEL_TENSOR.ATTN_K_NORM_DIFF:          "blk.{bid}.attn_k_norm_diff",
     MODEL_TENSOR.ATTN_OUT_NORM:             "blk.{bid}.attn_output_norm",
     MODEL_TENSOR.ATTN_POST_NORM:            "blk.{bid}.post_attention_norm",
     MODEL_TENSOR.FFN_GATE_INP:              "blk.{bid}.ffn_gate_inp",
@@ -2121,6 +2136,29 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.ATTN_K_NORM,
         MODEL_TENSOR.ATTN_V,
         MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.FFN_NORM,
+        MODEL_TENSOR.FFN_GATE,
+        MODEL_TENSOR.FFN_DOWN,
+        MODEL_TENSOR.FFN_UP,
+    ],
+    MODEL_ARCH.ORTHRUS: [
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.OUTPUT_NORM,
+        MODEL_TENSOR.OUTPUT,
+        MODEL_TENSOR.ROPE_FREQS,
+        MODEL_TENSOR.ATTN_NORM,
+        MODEL_TENSOR.ATTN_Q,
+        MODEL_TENSOR.ATTN_Q_NORM,
+        MODEL_TENSOR.ATTN_K,
+        MODEL_TENSOR.ATTN_K_NORM,
+        MODEL_TENSOR.ATTN_V,
+        MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.ATTN_Q_DIFF,
+        MODEL_TENSOR.ATTN_Q_NORM_DIFF,
+        MODEL_TENSOR.ATTN_K_DIFF,
+        MODEL_TENSOR.ATTN_K_NORM_DIFF,
+        MODEL_TENSOR.ATTN_V_DIFF,
+        MODEL_TENSOR.ATTN_OUT_DIFF,
         MODEL_TENSOR.FFN_NORM,
         MODEL_TENSOR.FFN_GATE,
         MODEL_TENSOR.FFN_DOWN,

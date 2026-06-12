@@ -30,6 +30,13 @@ static llm_graph_type ctx_type_to_graph_type(llama_context_type ctx_type) {
     throw std::runtime_error("Unsupported ctx type");
 }
 
+static llm_graph_type cparams_to_graph_type(const llama_cparams & cparams) {
+    if (cparams.orthrus_diffusion) {
+        return LLM_GRAPH_TYPE_DECODER_ORTHRUS_DIFFUSION;
+    }
+    return ctx_type_to_graph_type(cparams.ctx_type);
+}
+
 llama_context::llama_context(
         const llama_model & model,
               llama_context_params params) :
@@ -67,6 +74,7 @@ llama_context::llama_context(
     cparams.embeddings              = params.embeddings;
     cparams.embeddings_nextn        = false;
     cparams.embeddings_nextn_masked = false;
+    cparams.orthrus_diffusion       = false;
     cparams.offload_kqv             = params.offload_kqv;
     cparams.no_perf                 = params.no_perf;
     cparams.warmup                  = false;
@@ -1168,6 +1176,22 @@ void llama_context::set_causal_attn(bool value) {
     sched_need_reserve = true;
 }
 
+void llama_context::set_orthrus_diffusion(bool value) {
+    LLAMA_LOG_DEBUG("%s: value = %d\n", __func__, value);
+
+    if (cparams.orthrus_diffusion == value) {
+        return;
+    }
+
+    cparams.orthrus_diffusion = value;
+
+    // No scheduler reservation is needed here: the Orthrus diffusion graph has
+    // the same worst-case tensor shapes and buffer footprint as the AR graph
+    // (same trunk and dimensions; different attention weights and mask values).
+    // The graph type still changes, so graph reuse is rejected for AR/diffusion
+    // alternation while the existing reservation remains valid.
+}
+
 void llama_context::set_warmup(bool value) {
     LLAMA_LOG_DEBUG("%s: value = %d\n", __func__, value);
 
@@ -1836,7 +1860,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
         ggml_status status;
 
-        const auto * res = process_ubatch(ubatch, ctx_type_to_graph_type(cparams.ctx_type), mctx.get(), status);
+        const auto * res = process_ubatch(ubatch, cparams_to_graph_type(cparams), mctx.get(), status);
 
         if (!res) {
             // the last ubatch failed or was aborted -> remove all positions of that ubatch from the memory module
@@ -2366,7 +2390,7 @@ ggml_cgraph * llama_context::graph_reserve(
 
     auto * res = gf_res_reserve.get();
 
-    const auto gparams = graph_params(res, ubatch, mctx, ctx_type_to_graph_type(cparams.ctx_type));
+    const auto gparams = graph_params(res, ubatch, mctx, cparams_to_graph_type(cparams));
 
     res->reset();
 
@@ -2395,10 +2419,15 @@ llm_graph_params llama_context::graph_params(
                       const llama_ubatch & ubatch,
             const llama_memory_context_i * mctx,
                           llm_graph_type   gtype) const {
+    auto cparams_graph = cparams;
+    if (cparams_graph.orthrus_diffusion) {
+        cparams_graph.causal_attn = false;
+    }
+
     return {
         /*.arch        =*/ model.arch,
         /*.hparams     =*/ model.hparams,
-        /*.cparams     =*/ cparams,
+        /*.cparams     =*/ cparams_graph,
         /*.ubatch      =*/ ubatch,
         /*.gtype       =*/ gtype,
         /*.sched       =*/ sched.get(),
@@ -3345,7 +3374,7 @@ void llama_context::opt_epoch_iter(
 
             auto * res = gf_res_prev.get();
 
-            const auto gparams = graph_params(res, ubatch, mctx.get(), ctx_type_to_graph_type(cparams.ctx_type));
+            const auto gparams = graph_params(res, ubatch, mctx.get(), cparams_to_graph_type(cparams));
 
             res->reset();
 
@@ -3643,6 +3672,10 @@ void llama_set_embeddings(llama_context * ctx, bool embeddings) {
 
 void llama_set_causal_attn(llama_context * ctx, bool causal_attn) {
     ctx->set_causal_attn(causal_attn);
+}
+
+void llama_set_orthrus_diffusion(llama_context * ctx, bool value) {
+    ctx->set_orthrus_diffusion(value);
 }
 
 void llama_set_warmup(llama_context * ctx, bool warmup) {

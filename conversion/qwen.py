@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from typing import Any, Callable, Iterable, TYPE_CHECKING
 
 import torch
@@ -246,6 +248,48 @@ class Qwen3Model(Qwen2Model):
                 return
 
         yield from super().modify_tensors(data_torch, name, bid)
+
+
+@ModelBase.register("OrthrusLM")
+class OrthrusModel(Qwen3Model):
+    model_arch = gguf.MODEL_ARCH.ORTHRUS
+
+    def set_vocab(self):
+        tokenizer_config = self.dir_model / "tokenizer_config.json"
+        original_config: str | None = None
+
+        if tokenizer_config.is_file():
+            config = json.loads(tokenizer_config.read_text(encoding="utf-8"))
+            extra_special_tokens = config.get("extra_special_tokens")
+            if isinstance(extra_special_tokens, list):
+                original_config = tokenizer_config.read_text(encoding="utf-8")
+                config["extra_special_tokens"] = {
+                    f"extra_special_token_{idx}": token
+                    for idx, token in enumerate(extra_special_tokens)
+                }
+                tokenizer_config.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+        try:
+            super().set_vocab()
+        finally:
+            if original_config is not None:
+                tokenizer_config.write_text(original_config, encoding="utf-8")
+
+        mask_token_id = self.hparams.get("mask_token_id")
+        if mask_token_id is None:
+            raise ValueError("Orthrus config is missing required mask_token_id")
+        if not any(gguf.Keys.Tokenizer.MASK_ID in kv_data for kv_data in self.gguf_writer.kv_data):
+            self.gguf_writer.add_mask_token_id(mask_token_id)
+        logger.info(f"gguf: mask token id = {mask_token_id}")
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+
+        block_size = self.hparams.get("block_size")
+        if block_size is None:
+            raise ValueError("Orthrus config is missing required block_size")
+        self.gguf_writer.add_diffusion_block_size(block_size)
+        logger.info(f"gguf: diffusion block size = {block_size}")
 
 
 @ModelBase.register("Qwen3MoeForCausalLM")

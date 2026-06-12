@@ -125,16 +125,20 @@ static tensor_category tensor_get_category(const std::string & tensor_name) {
     if (tensor_name.find("attn_kv_b.weight") != std::string::npos) {
         return tensor_category::ATTENTION_KV_B;
     }
-    if (tensor_name.find("attn_v.weight") != std::string::npos) {
+    if (tensor_name.find("attn_v.weight") != std::string::npos ||
+        tensor_name.find("attn_v_diff.weight") != std::string::npos) {
         return tensor_category::ATTENTION_V;
     }
-    if (tensor_name.find("attn_k.weight") != std::string::npos) {
+    if (tensor_name.find("attn_k.weight") != std::string::npos ||
+        tensor_name.find("attn_k_diff.weight") != std::string::npos) {
         return tensor_category::ATTENTION_K;
     }
-    if (tensor_name.find("attn_q.weight") != std::string::npos) {
+    if (tensor_name.find("attn_q.weight") != std::string::npos ||
+        tensor_name.find("attn_q_diff.weight") != std::string::npos) {
         return tensor_category::ATTENTION_Q;
     }
-    if (tensor_name.find("attn_output.weight") != std::string::npos) {
+    if (tensor_name.find("attn_output.weight") != std::string::npos ||
+        tensor_name.find("attn_output_diff.weight") != std::string::npos) {
         return tensor_category::ATTENTION_OUTPUT;
     }
     if (tensor_name.find("ffn_up") != std::string::npos) {

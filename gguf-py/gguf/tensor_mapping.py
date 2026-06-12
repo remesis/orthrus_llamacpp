@@ -271,6 +271,10 @@ class TensorNameMap:
             "model.blocks.{bid}.attn.attn_query",                        # talkie
         ),
 
+        MODEL_TENSOR.ATTN_Q_DIFF: (
+            "model.layers.{bid}.self_attn.q_proj_diff",                  # orthrus
+        ),
+
         # Attention key
         MODEL_TENSOR.ATTN_K: (
             "model.layers.{bid}.self_attn.k_proj",                     # llama-hf nemotron olmoe olmo2 phimoe
@@ -292,6 +296,10 @@ class TensorNameMap:
             "model.blocks.{bid}.attn.attn_key",                        # talkie
         ),
 
+        MODEL_TENSOR.ATTN_K_DIFF: (
+            "model.layers.{bid}.self_attn.k_proj_diff",                 # orthrus
+        ),
+
         # Attention value
         MODEL_TENSOR.ATTN_V: (
             "model.layers.{bid}.self_attn.v_proj",                       # llama-hf nemotron olmoe olmo2 phimoe
@@ -310,6 +318,10 @@ class TensorNameMap:
             "layers.{bid}.self_attn.v_proj",                             # qwen3-embedding
             "backbone.layers.{bid}.mixer.v_proj",                        # nemotron-h
             "model.blocks.{bid}.attn.attn_value",                        # talkie
+        ),
+
+        MODEL_TENSOR.ATTN_V_DIFF: (
+            "model.layers.{bid}.self_attn.v_proj_diff",                   # orthrus
         ),
 
         # Attention output
@@ -349,6 +361,10 @@ class TensorNameMap:
             "backbone.layers.{bid}.mixer.o_proj",                           # nemotron-h
             "model.layers.{bid}.self_attn.language_expert_dense",           # cogvlm
             "model.blocks.{bid}.attn.attn_resid",                           # talkie
+        ),
+
+        MODEL_TENSOR.ATTN_OUT_DIFF: (
+            "model.layers.{bid}.self_attn.o_proj_diff",                     # orthrus
         ),
 
         # Attention output norm
@@ -701,6 +717,10 @@ class TensorNameMap:
             "model.blocks.{bid}.attn.head_gain.head_g",                       # talkie
         ),
 
+        MODEL_TENSOR.ATTN_Q_NORM_DIFF: (
+            "model.layers.{bid}.self_attn.q_norm_diff",                       # orthrus
+        ),
+
         MODEL_TENSOR.ATTN_K_NORM: (
             "encoder.layers.{bid}.self_attention.k_layernorm",
             "model.layers.{bid}.self_attn.k_layernorm",                       # persimmon
@@ -715,6 +735,10 @@ class TensorNameMap:
             "model.layers.layers.{bid}.mixer.k_norm",                         # plamo3
             "layers.{bid}.self_attn.k_norm",                                  # qwen3-embedding
             "model.layers.{bid}.attention.key_layernorm",                     # apertus
+        ),
+
+        MODEL_TENSOR.ATTN_K_NORM_DIFF: (
+            "model.layers.{bid}.self_attn.k_norm_diff",                       # orthrus
         ),
 
         MODEL_TENSOR.ROPE_FREQS: (

@@ -541,6 +541,19 @@ struct llama_model_qwen3 : public llama_model_base {
 };
 
 
+struct llama_model_orthrus : public llama_model_qwen3 {
+    llama_model_orthrus(const struct llama_model_params & params) : llama_model_qwen3(params) {}
+    void load_arch_hparams(llama_model_loader & ml) override;
+    void load_arch_tensors(llama_model_loader & ml) override;
+
+    struct graph_diffusion : public llm_graph_context {
+        graph_diffusion(const llama_model & model, const llm_graph_params & params);
+    };
+
+    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
+};
+
+
 struct llama_model_qwen3moe : public llama_model_base {
     llama_model_qwen3moe(const struct llama_model_params & params) : llama_model_base(params) {}
     void load_arch_hparams(llama_model_loader & ml) override;

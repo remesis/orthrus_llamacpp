@@ -161,6 +161,7 @@ enum common_speculative_type {
     COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE,  // standalone draft model speculative decoding
     COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3,  // Eagle3 speculative decoding
     COMMON_SPECULATIVE_TYPE_DRAFT_MTP,     // Multi-token prediction
+    COMMON_SPECULATIVE_TYPE_DRAFT_ORTHRUS, // Orthrus shared-KV diffusion draft decoding
     COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE,  // simple self-speculative decoding based on n-grams
     COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K,   // self-speculative decoding with n-gram keys only
     COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V, // self-speculative decoding with n-gram keys and 4 m-gram values
@@ -300,7 +301,7 @@ struct common_params_model {
 
 // draft-model-based speculative decoding parameters
 struct common_params_speculative_draft {
-    int32_t n_max = 3; // maximum number of tokens to draft during speculative decoding
+    int32_t n_max = -1; // maximum number of tokens to draft (-1 = auto)
     int32_t n_min = 0; // minimum number of draft tokens to use for speculative decoding
 
     float p_split = 0.1f; // speculative decoding split probability
@@ -366,7 +367,7 @@ struct common_params_speculative {
             return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
         });
 
-        return needs_rs_seq ? draft.n_max : 0u;
+        return needs_rs_seq ? (uint32_t) (draft.n_max > 0 ? draft.n_max : 3) : 0u;
     }
 };
 

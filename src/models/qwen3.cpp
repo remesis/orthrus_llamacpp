@@ -46,8 +46,41 @@ void llama_model_qwen3::load_arch_tensors(llama_model_loader &) {
     }
 }
 
+void llama_model_orthrus::load_arch_hparams(llama_model_loader & ml) {
+    llama_model_qwen3::load_arch_hparams(ml);
+
+    ml.get_key(LLM_KV_DIFFUSION_BLOCK_SIZE, hparams.n_diffusion_block);
+    GGML_ASSERT(hparams.n_diffusion_block >= 2 && hparams.n_diffusion_block <= 4096);
+}
+
+void llama_model_orthrus::load_arch_tensors(llama_model_loader & ml) {
+    llama_model_qwen3::load_arch_tensors(ml);
+
+    LLAMA_LOAD_LOCALS;
+
+    for (int i = 0; i < n_layer; ++i) {
+        auto & layer = layers[i];
+
+        layer.wq_diff = create_tensor(tn(LLM_TENSOR_ATTN_Q_DIFF, "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
+        layer.wk_diff = create_tensor(tn(LLM_TENSOR_ATTN_K_DIFF, "weight", i), {n_embd, n_embd_gqa}, 0);
+        layer.wv_diff = create_tensor(tn(LLM_TENSOR_ATTN_V_DIFF, "weight", i), {n_embd, n_embd_gqa}, 0);
+        layer.wo_diff = create_tensor(tn(LLM_TENSOR_ATTN_OUT_DIFF, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
+
+        layer.attn_q_norm_diff = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM_DIFF, "weight", i), {n_embd_head_k}, 0);
+        layer.attn_k_norm_diff = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM_DIFF, "weight", i), {n_embd_head_k}, 0);
+    }
+}
+
 std::unique_ptr<llm_graph_context> llama_model_qwen3::build_arch_graph(const llm_graph_params & params) const {
     return std::make_unique<graph>(*this, params);
+}
+
+std::unique_ptr<llm_graph_context> llama_model_orthrus::build_arch_graph(const llm_graph_params & params) const {
+    if (params.gtype == LLM_GRAPH_TYPE_DECODER_ORTHRUS_DIFFUSION) {
+        return std::make_unique<graph_diffusion>(*this, params);
+    }
+
+    return llama_model_qwen3::build_arch_graph(params);
 }
 
 llama_model_qwen3::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
@@ -109,6 +142,135 @@ llama_model_qwen3::graph::graph(const llama_model & model, const llm_graph_param
 
             cur = build_attn(inp_attn,
                     model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
+                    Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, 1.0f/sqrtf(float(n_embd_head)), il);
+        }
+        if (il == n_layer - 1 && inp_out_ids) {
+            cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
+            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+        }
+        ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+        cb(ffn_inp, "ffn_inp", il);
+
+        // feed-forward network
+        cur = build_norm(ffn_inp,
+                model.layers[il].ffn_norm, NULL,
+                LLM_NORM_RMS, il);
+        cb(cur, "ffn_norm", il);
+
+        cur = build_ffn(cur,
+                model.layers[il].ffn_up,   NULL, model.layers[il].ffn_up_s,
+                model.layers[il].ffn_gate, NULL, model.layers[il].ffn_gate_s,
+                model.layers[il].ffn_down, NULL, model.layers[il].ffn_down_s,
+                NULL,
+                LLM_FFN_SILU, LLM_FFN_PAR, il);
+        cb(cur, "ffn_out", il);
+
+        cur = ggml_add(ctx0, cur, ffn_inp);
+
+        cur = build_cvec(cur, il);
+        cb(cur, "l_out", il);
+
+        // input for next layer
+        inpL = cur;
+    }
+    cur = inpL;
+
+    cur = build_norm(cur,
+            model.output_norm, NULL,
+            LLM_NORM_RMS, -1);
+
+    cb(cur, "result_norm", -1);
+    res->t_embd = cur;
+
+    // lm_head
+    cur = build_lora_mm(model.output, cur, model.output_s);
+
+    cb(cur, "result_output", -1);
+    res->t_logits = cur;
+
+    ggml_build_forward_expand(gf, cur);
+}
+
+llama_model_orthrus::graph_diffusion::graph_diffusion(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+    const int64_t n_embd_head = hparams.n_embd_head_v();
+
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
+    GGML_ASSERT(n_embd_head == n_rot);
+
+    ggml_tensor * cur;
+    ggml_tensor * inpL;
+
+    inpL = build_inp_embd(model.tok_embd);
+
+    // inp_pos - contains the positions
+    ggml_tensor * inp_pos = build_inp_pos();
+
+    auto * inp_attn = build_attn_inp_kv();
+
+    ggml_tensor * inp_out_ids = build_inp_out_ids();
+
+    for (int il = 0; il < n_layer; ++il) {
+        res->t_layer_inp[il] = inpL;
+
+        ggml_tensor * inpSA = inpL;
+
+        // norm
+        cur = build_norm(inpL,
+                model.layers[il].attn_norm, NULL,
+                LLM_NORM_RMS, il);
+        cb(cur, "attn_norm", il);
+
+        // diffusion self-attention
+        {
+            ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq_diff, cur);
+            cb(Qcur, "Qcur_diff", il);
+            if (hparams.f_clamp_kqv > 0.0f) {
+                Qcur = ggml_clamp(ctx0, Qcur, -hparams.f_clamp_kqv, hparams.f_clamp_kqv);
+                cb(Qcur, "Qcur_diff_clamped", il);
+            }
+
+            ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk_diff, cur);
+            cb(Kcur, "Kcur_diff", il);
+            if (hparams.f_clamp_kqv > 0.0f) {
+                Kcur = ggml_clamp(ctx0, Kcur, -hparams.f_clamp_kqv, hparams.f_clamp_kqv);
+                cb(Kcur, "Kcur_diff_clamped", il);
+            }
+
+            ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv_diff, cur);
+            cb(Vcur, "Vcur_diff", il);
+            if (hparams.f_clamp_kqv > 0.0f) {
+                Vcur = ggml_clamp(ctx0, Vcur, -hparams.f_clamp_kqv, hparams.f_clamp_kqv);
+                cb(Vcur, "Vcur_diff_clamped", il);
+            }
+
+            Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
+            Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+            Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
+
+            Qcur = build_norm(Qcur, model.layers[il].attn_q_norm_diff, NULL, LLM_NORM_RMS, il);
+            cb(Qcur, "Qcur_diff_normed", il);
+
+            Qcur = ggml_rope_ext(
+                    ctx0, Qcur, inp_pos, nullptr,
+                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                    ext_factor, attn_factor, beta_fast, beta_slow
+                    );
+
+            Kcur = build_norm(Kcur, model.layers[il].attn_k_norm_diff, NULL, LLM_NORM_RMS, il);
+            cb(Kcur, "Kcur_diff_normed", il);
+
+            Kcur = ggml_rope_ext(
+                    ctx0, Kcur, inp_pos, nullptr,
+                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                    ext_factor, attn_factor, beta_fast, beta_slow
+                    );
+
+            cb(Qcur, "Qcur_diff", il);
+            cb(Kcur, "Kcur_diff", il);
+            cb(Vcur, "Vcur_diff", il);
+
+            cur = build_attn(inp_attn,
+                    model.layers[il].wo_diff, nullptr, nullptr,
                     Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, 1.0f/sqrtf(float(n_embd_head)), il);
         }
         if (il == n_layer - 1 && inp_out_ids) {
