@@ -260,4 +260,5 @@ Orthrus models/code:
 ```text
 https://github.com/chiennv2000/orthrus
 https://huggingface.co/chiennv
+https://huggingface.co/originalGeek/Orthrus-Qwen3-8B-GGUF
 ```
