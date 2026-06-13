@@ -6,6 +6,16 @@ The main goal is not just loading Orthrus weights as Qwen3. The important part i
 
 This repository is intended as a working reference implementation. If upstream llama.cpp maintainers want any part of it, they can lift, rewrite, split, or improve it however they prefer.
 
+## Model Files
+
+Prebuilt 8B Q4_K_M GGUF and the official chat template are hosted here:
+
+```text
+https://huggingface.co/originalGeek/Orthrus-Qwen3-8B-GGUF
+```
+
+The hosted GGUF still requires this fork, or equivalent upstream Orthrus support, for `--spec-type draft-orthrus`.
+
 ## What Is Included
 
 - GGUF conversion for `OrthrusLM`.
@@ -170,6 +180,19 @@ Build/test checks:
 - `ctest -R test-orthrus-quant`
 
 ## Local Benchmark Snapshot
+
+Official Orthrus runtime cross-check:
+
+The Orthrus team's own Transformers implementation was benchmarked locally with the BF16 source checkpoint, PyTorch 2.11.0+cu128, Transformers 5.12.0, `attn_implementation="sdpa"`, and temp-0 generation on the same RTX 5090. These numbers are not a quantization-to-quantization comparison against the GGUF, but they confirm that the intended shared-KV diffusion path is worthwhile.
+
+| Case | Official HF AR | Official HF Orthrus | Accepted / Drafted | Acceptance |
+| --- | ---: | ---: | ---: | ---: |
+| Raw short, 256 tokens | 32.2 t/s | 352.6 t/s | 245 / 320 | 76.6% |
+| Raw technical, 512 tokens | 33.3 t/s | 163.1 t/s | 462 / 1541 | 30.0% |
+| Chat technical, 512 tokens | 27.4 t/s | 48.3 t/s | 370 / 4242 | 8.7% |
+| Chat long context, 6.5k prompt + 256 output | 3.8 t/s wall / 9.0 t/s decode | 5.9 t/s wall / 16.0 t/s decode | 175 / 2349 | 7.5% |
+
+llama.cpp fork benchmark:
 
 Environment:
 
